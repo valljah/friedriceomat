@@ -1,0 +1,11 @@
+{
+  "name": "friedriceomat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Control-room UI for an RL + AI controlled fried rice robot arm",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  }
+}

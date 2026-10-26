@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Friedriceomat Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><path d="M4 16h24a12 9 0 0 1-24 0z" fill="var(--accent)"/><path d="M28 16l3-3" stroke="var(--ink)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="13" r="1.6" fill="var(--ink)"/><circle cx="17" cy="11" r="1.6" fill="var(--ink)"/><circle cx="21" cy="13.5" r="1.6" fill="var(--ink)"/></svg>
+      <div>
+        <h1>Friedriceomat</h1>
+        <p id="dishName" class="sub">—</p>
+      </div>
+    </div>
+    <div class="status">
+      <span id="statusPill" class="pill">Idle</span>
+      <span class="stat"><small>Episode</small><b id="episodeNo">1</b></span>
+      <span class="stat"><small>Time</small><b id="simTime">0.0 s</b></span>
+      <span class="stat"><small>Return</small><b id="episodeReturn">0.00</b></span>
+    </div>
+    <div class="transport">
+      <button id="btnRun" class="primary" type="button">Start</button>
+      <button id="btnStep" type="button" title="Run one decision">Step</button>
+      <button id="btnReset" type="button">Reset</button>
+      <label class="inline">Speed
+        <select id="speed">
+          <option value="0.5">0.5×</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="4" selected>4×</option>
+          <option value="8">8×</option>
+          <option value="16">16×</option>
+        </select>
+      </label>
+      <label class="inline check"><input id="autoNext" type="checkbox" checked> Auto-cook next</label>
+      <button id="btnTheme" type="button" class="ghost" title="Toggle light/dark">Theme</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel controls" aria-label="Behaviour controls">
+      <div class="panel-head">
+        <h2>Behaviour</h2>
+        <button id="btnDefaults" type="button" class="ghost small">Defaults</button>
+      </div>
+      <div id="controls"></div>
+    </aside>
+
+    <section class="center">
+      <div class="card cell">
+        <div class="card-head">
+          <h2>Robot cell</h2>
+          <span id="actionNow" class="tag">waiting</span>
+        </div>
+        <div class="canvas-wrap"><canvas id="armCanvas" aria-label="Animated side view of the robot arm, ingredients, wok and plate"></canvas></div>
+        <div id="joints" class="joints"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Control loop</h2>
+          <span class="hint">one decision per arm motion</span>
+        </div>
+        <ol id="pipeline" class="pipeline"></ol>
+      </div>
+
+      <div class="charts">
+        <div class="card chart-card">
+          <div class="card-head"><h3>Wok temperature</h3><div class="legend" id="legTemp"></div></div>
+          <div class="chart"><canvas id="chTemp"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <div class="card-head"><h3>Grain state</h3><div class="legend" id="legGrain"></div></div>
+          <div class="chart"><canvas id="chGrain"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <div class="card-head"><h3>Reward</h3><div class="legend" id="legReward"></div></div>
+          <div class="chart"><canvas id="chReward"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="card">
+        <div class="card-head"><h2>Sensors</h2><span id="sensorSource" class="tag">simulated</span></div>
+        <ul id="sensors" class="sensors"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Policy decision</h2><span id="controlMode" class="tag">autonomous</span></div>
+        <div id="probs" class="probs"></div>
+        <div class="decision-meta">
+          <span>Value <b id="valueEst">—</b></span>
+          <span>Entropy <b id="entropy">—</b></span>
+          <span id="shieldNote" class="shield-note"></span>
+        </div>
+        <div id="manualBar" class="manual" hidden>
+          <p class="hint">Manual mode: pick the next action. Your choices are used as demonstrations when online learning is on.</p>
+          <div id="manualButtons" class="manual-buttons"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Plan</h2><span class="tag">AI planner</span></div>
+        <ol id="plan" class="plan"></ol>
+        <details class="notes"><summary>Planner reasoning</summary><ul id="planNotes"></ul></details>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Dish quality</h2><b id="dishScore" class="score">—</b></div>
+        <div id="dish" class="dish"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Event log</h2><button id="btnClearLog" type="button" class="ghost small">Clear</button></div>
+        <ol id="log" class="log"></ol>
+      </div>
+    </aside>
+
+    <section class="card training">
+      <div class="card-head">
+        <h2>Training</h2>
+        <div class="train-actions">
+          <label class="inline">Episodes <input id="trainN" type="number" min="1" max="2000" value="100"></label>
+          <button id="btnTrain" type="button" class="primary">Train</button>
+          <button id="btnPretrain" type="button" title="Behaviour cloning from the hand-written expert">Imitation pretrain</button>
+          <button id="btnRandom" type="button" title="Start learning from scratch">Random weights</button>
+          <button id="btnExport" type="button">Export policy</button>
+          <label class="button">Import policy<input id="importPolicy" type="file" accept="application/json" hidden></label>
+        </div>
+      </div>
+      <div class="progress"><div id="trainProgress"></div></div>
+      <div class="train-grid">
+        <div>
+          <div class="card-head"><h3>Learning curve</h3><div class="legend" id="legCurve"></div></div>
+          <div class="chart tall"><canvas id="chCurve"></canvas></div>
+          <p id="trainSummary" class="hint"></p>
+        </div>
+        <div>
+          <div class="card-head"><h3>Policy weights</h3><span class="hint">action ← feature, <span class="sw pos"></span> positive <span class="sw neg"></span> negative</span></div>
+          <div class="chart tall"><canvas id="weights"></canvas></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
