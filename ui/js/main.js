@@ -6,6 +6,7 @@ import {
 } from './sim.js';
 import { FEATURES, LinearPolicy, applyShield, featurize, pretrain, runEpisode } from './policy.js';
 import { ArmView } from './arm.js';
+import { ArmView3D } from './arm3d.js';
 import { LineChart, WeightMap } from './charts.js';
 import { RobotBridge } from './bridge.js';
 
@@ -224,7 +225,8 @@ let pendingPlan = null;
 let sim = new WokSim(plan, cfg.env);
 let policyFromStorage = false;
 let policy = initPolicy();
-const arm = new ArmView($('armCanvas'));
+let armFallback = null;
+const arm = createArmView();
 const bridge = new RobotBridge();
 
 let running = false;
@@ -241,6 +243,19 @@ let lastDecision = null;
 let nextEpisodeTimer = null;
 const manualQueue = [];
 const curve = [];
+
+// 3D cell view, or the 2D side view when WebGL is not available.
+function createArmView() {
+  try {
+    return new ArmView3D($('armCanvas3d'));
+  } catch (err) {
+    armFallback = err.message;
+    $('armCanvas3d').hidden = true;
+    $('armCanvas').hidden = false;
+    $('cellHint').hidden = true;
+    return new ArmView($('armCanvas'));
+  }
+}
 
 function initPolicy() {
   const saved = loadJSON(POLICY_KEY);
@@ -635,11 +650,15 @@ function renderDish(q, final) {
 }
 
 function renderJoints() {
-  const deg = (r) => `${(r * 180 / Math.PI).toFixed(0)}°`;
-  const j = arm.joints;
-  $('joints').innerHTML = `<span>Shoulder <b>${deg(j.q1)}</b></span><span>Elbow <b>${deg(j.q2)}</b></span><span>Wrist <b>${deg(j.q3)}</b></span>`
-    + `<span>Tool <b>${arm.tip.x.toFixed(0)}, ${arm.tip.y.toFixed(0)}</b></span><span>Agitation <b>${pct(sim.s.agitation)}</b></span>`
-    + `<span>Wok hei <b>${pct(sim.s.wokHei)}</b></span>`;
+  const rows = [...arm.readout(), ['Agitation', pct(sim.s.agitation)], ['Wok hei', pct(sim.s.wokHei)]];
+  const box = $('joints');
+  if (box.children.length !== rows.length) {
+    box.replaceChildren(...rows.map(() => el('span', {}, el('span'), ' ', el('b'))));
+  }
+  rows.forEach(([label, value], i) => {
+    box.children[i].firstChild.textContent = label;
+    box.children[i].lastChild.textContent = value;
+  });
 }
 
 function redrawCurve() {
@@ -850,6 +869,7 @@ applyPlan(plan);
 weightMap.draw(policy.W);
 redrawCurve();
 log(policyFromStorage ? `Loaded saved policy (${policy.updates} updates).` : 'Policy pretrained by imitation of the expert controller.');
+if (armFallback) log(`3D view unavailable (${armFallback}), showing the 2D view.`, 'warn');
 log(`Dish #${episodeNo}: ${plan.name}. Press Start.`);
 lastDecision = (() => {
   const obs = observe();

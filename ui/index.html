@@ -55,7 +55,11 @@
           <h2>Robot cell</h2>
           <span id="actionNow" class="tag">waiting</span>
         </div>
-        <div class="canvas-wrap"><canvas id="armCanvas" aria-label="Animated side view of the robot arm, ingredients, wok and plate"></canvas></div>
+        <div class="canvas-wrap">
+          <canvas id="armCanvas3d" class="gl" aria-label="3D view of the robot arm, ingredient bowls, wok, plate and sensor mast"></canvas>
+          <canvas id="armCanvas" hidden aria-label="Animated side view of the robot arm, ingredients, wok and plate"></canvas>
+        </div>
+        <p id="cellHint" class="hint">Drag to orbit, scroll or pinch to zoom, right-drag or shift-drag to pan, double-click to reset.</p>
         <div id="joints" class="joints"></div>
       </div>
 

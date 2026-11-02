@@ -94,3 +94,29 @@ test('features have the documented length and survive disabled sensors', () => {
   assert.equal(f.length, FEATURES.length);
   assert.ok(f.every(Number.isFinite));
 });
+
+test('3D arm: forward kinematics reproduces the inverse-kinematics target', async () => {
+  const { ARM, inverseKinematics, forwardKinematics, makePath, samplePath, fromCyl } = await import('../ui/js/kinematics.js');
+  const targets = [
+    { x: 0.5, y: 0.36, z: 0, p: -Math.PI / 2 },           // home above the wok
+    { x: -0.3, y: 0.05, z: -0.46, p: -Math.PI / 2 + 0.2 }, // inside a bowl behind the arm
+    { x: 0.62, y: 0.33, z: 0, p: -0.6 },                   // toss flick
+    { x: 0.27, y: 0.1, z: 0.48, p: -0.5 },                 // over the plate
+  ];
+  for (const t of targets) {
+    const j = inverseKinematics(t, t.p);
+    assert.ok(j.reachable, `unreachable ${JSON.stringify(t)}`);
+    const fk = forwardKinematics(j);
+    assert.ok(Math.hypot(fk.tip.x - t.x, fk.tip.y - t.y, fk.tip.z - t.z) < 1e-9);
+    assert.ok(Math.abs(fk.pitch - t.p) < 1e-9);
+    assert.ok(fk.elbow.y > ARM.shoulderH - 0.05, 'elbow-up solution');
+  }
+  // Paths sweep around the base instead of through it.
+  const path = makePath([{ yaw: 3, r: 0.55, y: 0.3, p: -1.5 }, { yaw: -3, r: 0.5, y: 0.3, p: -1.5 }]);
+  for (let k = 0; k <= 10; k++) {
+    const c = samplePath(path, k / 10);
+    const pt = fromCyl(c);
+    assert.ok(Math.hypot(pt.x, pt.z) > 0.49);
+  }
+  assert.ok(Math.abs(path.pts[1].yaw - path.pts[0].yaw) < Math.PI);
+});

@@ -21,7 +21,7 @@ There are no dependencies. Node 18 or newer is enough.
 
 | Area | What it shows |
 |---|---|
-| **Robot cell** | Animated side view: ingredient bowls, a 3-joint arm with a spatula (2-link inverse kinematics), the wok, burner flame, steam/smoke, the plate, and the IR/camera sensor mast. Joint angles are shown live. |
+| **Robot cell** | 3D scene: ingredient bowls on an arc around a 4-axis arm (base yaw, shoulder, elbow, wrist) with a spatula, the wok on its burner, flames, steam and smoke, the plate, and the sensor mast with its IR beam and camera cone. Drag to orbit, scroll or pinch to zoom, right-drag or shift-drag to pan. There are Overview, Wok and Top views and an auto-orbit. Joint angles and the tool position are shown live. Without WebGL the page falls back to a 2D side view. |
 | **Control loop** | One decision per arm motion: Sensors → State encoder → Planner → Policy π(a\|s) → Safety shield → Arm controller. It lights up on every decision and shows the value passed along at each step. |
 | **Charts** | Wok temperature (true, IR reading, stage target, shield limit); grain moisture, browning and mixing against the planner's targets; return and weighted quality. Hover any chart for exact values. |
 | **Sensors** | Live readings, with markers for the targets. A disabled sensor shows "offline", and the policy then acts blind on a fallback value. |
@@ -71,8 +71,11 @@ sensors ──► features (18) ──► linear softmax policy ──► safety
 - `ui/js/sim.js` is the wok physics: heating, evaporation, browning, burning,
   clumping, mixing, wok hei, spills. It also produces the noisy sensor
   readings and the dish score and reward.
-- `ui/js/arm.js` draws the arm and computes its kinematics. `ui/js/charts.js`
-  draws the charts. `ui/js/main.js` wires the UI together.
+- `ui/js/arm3d.js` draws the 3D cell. It uses `ui/js/gl3d.js`, a small
+  dependency-free WebGL renderer, and `ui/js/kinematics.js`, which holds the
+  arm's inverse/forward kinematics and its waypoint paths (unit tested).
+  `ui/js/arm.js` is the 2D fallback view. `ui/js/charts.js` draws the charts.
+  `ui/js/main.js` wires the UI together.
 
 ## Connecting the real robot
 
