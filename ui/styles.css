@@ -49,7 +49,7 @@
     --div-mid: #f0efec;
     --steel: #8d939c;
     --steel-dark: #5b616b;
-    --counter: #d9d7d0;
+    --counter: #c9c6bd;
   }
 }
 
@@ -74,10 +74,11 @@
   --div-mid: #f0efec;
   --steel: #8d939c;
   --steel-dark: #5b616b;
-  --counter: #d9d7d0;
+  --counter: #c9c6bd;
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body { background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.4; }
 h1, h2, h3 { margin: 0; font-weight: 650; }
@@ -166,6 +167,20 @@ input[type="checkbox"] { accent-color: var(--accent); }
 /* Robot cell */
 .canvas-wrap { position: relative; }
 #armCanvas { width: 100%; display: block; border-radius: 8px; background: linear-gradient(var(--panel-2), var(--panel)); }
+#armCanvas3d { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 8px; background: var(--panel-2); cursor: grab; touch-action: pan-y; }
+#armCanvas3d:active { cursor: grabbing; }
+@media (max-width: 820px) { #armCanvas3d { aspect-ratio: 4 / 3; } .cell-label { font-size: 10px; padding: 0 4px; } }
+.cell-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 8px; }
+.cell-labels { position: absolute; inset: 0; }
+.cell-label { position: absolute; left: 0; top: 0; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--ink); background: color-mix(in srgb, var(--panel) 75%, transparent); padding: 1px 6px; border-radius: 99px; }
+.cell-label.done { color: var(--muted); font-weight: 400; }
+.cell-label.next { box-shadow: 0 0 0 1.5px var(--accent) inset; }
+.cell-label.ir { color: var(--critical); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cell-caption { position: absolute; left: 12px; top: 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.cell-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.cell-tools button { background: color-mix(in srgb, var(--panel) 85%, transparent); }
+.cell-tools button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#cellHint { margin-top: 6px; }
 .joints { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .joints b { color: var(--ink); font-weight: 600; }
 

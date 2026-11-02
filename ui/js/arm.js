@@ -56,6 +56,12 @@ export class ArmView {
     this.scale = this.canvas.width / W;
   }
 
+  readout() {
+    const deg = (r) => `${(r * 180 / Math.PI).toFixed(0)}°`;
+    const j = this.joints;
+    return [['Shoulder', deg(j.q1)], ['Elbow', deg(j.q2)], ['Wrist', deg(j.q3)], ['Tool', `${this.tip.x.toFixed(0)}, ${this.tip.y.toFixed(0)}`]];
+  }
+
   setPlan(plan) {
     this.stages = plan.stages;
     const n = this.stages.length;
