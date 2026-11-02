@@ -419,7 +419,11 @@ function finishCurrent() {
   if (adding) log(`Added ${adding.label} (${adding.grams} g) at ${sim.s.T.toFixed(0)} °C, target ${adding.targetTemp} °C`);
   if (spilled) log('Spill! Toss was too aggressive.', 'bad');
   current = null;
-  if (stepping) { stepping = false; setRunning(false); }
+  // A step runs one action, but keeps going while manual actions are queued.
+  if (stepping && !(cfg.agent.mode === 'manual' && manualQueue.length)) {
+    stepping = false;
+    setRunning(false);
+  }
   if (sim.done || sim.s.t >= sim.cfg.maxTime) endEpisode();
 }
 

@@ -112,3 +112,56 @@ export function samplePath(path, progress) {
   const t = smooth(Math.min(1, Math.max(0, (d - len[i - 1]) / ((len[i] - len[i - 1]) || 1))));
   return { yaw: lerp(a.yaw, b.yaw, t), r: lerp(a.r, b.r, t), y: lerp(a.y, b.y, t), p: lerp(a.p, b.p, t) };
 }
+
+// ------------------------------------------------------------ wok toss --
+// The wok sits at yaw 0 with its handle pointing back at the arm, so the
+// handle lies in the arm's vertical plane and a wrist pitch tilts the wok
+// about the gripper (positive pitch lifts the far lip).
+
+export const WOK = { x: 0.56, z: 0, bottom: 0.085, depth: 0.09, r: 0.2 };
+export const HANDLE = { length: 0.22, rise: 0.04, gripAt: 0.16 };
+export const GRIP = 0.05; // distance from the wrist to the gripper fingers
+
+const DOWN = -Math.PI / 2;
+
+// Grip point on the handle (radius from the base, height).
+export function handleGrip() {
+  const rimR = WOK.x - WOK.r;
+  const rimY = WOK.bottom + WOK.depth;
+  return { r: rimR - HANDLE.gripAt, y: rimY + (HANDLE.rise * HANDLE.gripAt) / HANDLE.length };
+}
+
+// Tool-tip waypoint (yaw 0) that puts the gripper fingers at (r, y) with tool pitch p.
+export function gripWaypoint(r, y, p, flags = {}) {
+  const k = ARM.tool - GRIP;
+  return { yaw: 0, r: r + k * Math.cos(p), y: y + k * Math.sin(p), p, ...flags };
+}
+
+// Waypoints for one TOSS action. When the arm is not yet holding the wok it
+// first reaches down and grasps the handle; it ends holding the wok on the
+// burner so consecutive tosses don't need a new grasp.
+export function tossWaypoints(from, holding) {
+  const g = handleGrip();
+  const pts = [from];
+  let cycles = 2;
+  if (!holding) {
+    pts.push(gripWaypoint(g.r, g.y + 0.12, DOWN), gripWaypoint(g.r, g.y, DOWN, { grasp: true }));
+    cycles = 1;
+  }
+  for (let i = 0; i < cycles; i++) {
+    pts.push(
+      gripWaypoint(g.r, g.y + 0.06, DOWN),                  // lift off the burner
+      gripWaypoint(g.r + 0.06, g.y + 0.07, DOWN - 0.1),     // push out, far lip dips
+      gripWaypoint(g.r - 0.03, g.y + 0.13, DOWN + 0.35, { flick: true }), // pull back + flick up
+      gripWaypoint(g.r, g.y + 0.06, DOWN),                  // catch
+    );
+  }
+  pts.push(gripWaypoint(g.r, g.y, DOWN)); // set the wok back down, keep holding
+  return pts;
+}
+
+// Lets go of the handle and lifts the gripper clear.
+export function releaseWaypoints(from) {
+  const g = handleGrip();
+  return [from, { ...from, release: true }, gripWaypoint(g.r, g.y + 0.1, DOWN)];
+}

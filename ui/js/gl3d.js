@@ -106,6 +106,14 @@ export const mat4 = {
       c02 / det, c12 / det, c22 / det,
     ]);
   },
+  // Inverse of a rigid transform (rotation + translation only).
+  invertRigid(m) {
+    const out = new Float32Array(16);
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) out[c * 4 + r] = m[r * 4 + c];
+    for (let r = 0; r < 3; r++) out[12 + r] = -(out[r] * m[12] + out[4 + r] * m[13] + out[8 + r] * m[14]);
+    out[15] = 1;
+    return out;
+  },
   transformPoint(m, p) {
     const x = p[0], y = p[1], z = p[2];
     const w = m[3] * x + m[7] * y + m[11] * z + m[15];
