@@ -3,14 +3,16 @@
 // either: setPlan, reset, startAction, update, draw, resize, readout, caption.
 
 import { ACTIONS } from './sim.js';
-import { ARM, forwardKinematics, fromCyl, inverseKinematics, makePath, pathDistance, samplePath } from './kinematics.js';
+import {
+  ARM, GRIP, HANDLE, WOK, forwardKinematics, fromCyl, inverseKinematics, makePath, pathDistance,
+  releaseWaypoints, samplePath, tossWaypoints,
+} from './kinematics.js';
 import { Renderer, geometry, mat4, rgb } from './gl3d.js';
 
 const DEG = Math.PI / 180;
 const DOWN = -Math.PI / 2;
 
 // Cell layout (metres, counter top at y = 0, arm base at the origin).
-const WOK = { x: 0.56, z: 0, bottom: 0.085, depth: 0.09, r: 0.2 };
 const STOVE_TOP = 0.07;
 const BOWL_RING = 0.55;
 const PLATE_YAW = -60 * DEG;
@@ -21,13 +23,23 @@ const HOME = { yaw: 0, r: 0.5, y: 0.36, p: DOWN };
 
 const VIEWS = {
   overview: { target: [0.2, 0.15, 0], az: 70 * DEG, el: 28 * DEG, dist: 1.7 },
-  wok: { target: [0.56, 0.12, 0], az: 60 * DEG, el: 42 * DEG, dist: 0.9 },
+  wok: { target: [0.46, 0.15, 0], az: 62 * DEG, el: 36 * DEG, dist: 1.05 },
   top: { target: [0.15, 0, 0.05], az: 90 * DEG, el: 86 * DEG, dist: 2.3 },
 };
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+const WOK_REST = mat4.translation(WOK.x, 0, WOK.z);
 const wokSurface = (d) => WOK.bottom + WOK.depth * (d / WOK.r) ** 2;
+
+// World transforms of the arm's links for a joint configuration.
+function armFrames({ yaw, q1, q2, q3 }) {
+  const base = mat4.rotY(yaw);
+  const shoulder = mat4.mul(base, mat4.translation(0, ARM.shoulderH, 0), mat4.rotZ(q1));
+  const elbow = mat4.mul(shoulder, mat4.translation(ARM.l1, 0, 0), mat4.rotZ(q2));
+  const wrist = mat4.mul(elbow, mat4.translation(ARM.l2, 0, 0), mat4.rotZ(q3));
+  return { base, shoulder, elbow, wrist };
+}
 
 function mixColor(a, b, t) {
   const ca = rgb(a);
@@ -72,7 +84,8 @@ export class ArmView3D {
     this.particles = [];
     this.puffs = [];
     this.plateFill = 0;
-    this.shake = 0;
+    this.holding = false;
+    this.wokRel = null;
     this.time = 0;
     this.caption = '';
     this.lastFrame = performance.now();
@@ -232,6 +245,8 @@ export class ArmView3D {
     this.plateFill = 0;
     this.carry = null;
     this.action = null;
+    this.holding = false;
+    this.wokRel = null;
     this.path = makePath([{ ...this.c }, HOME]);
     this.lastDist = 0;
     for (const b of this.bowls) b.full = true;
@@ -243,44 +258,46 @@ export class ArmView3D {
     const name = ACTIONS[a];
     this.action = name;
     const from = { ...this.c };
+    const heat = name === 'HEAT_UP' || name === 'HEAT_DOWN';
     let pts;
-    if (name === 'ADD') {
-      const b = this.bowls[sim.s.next];
-      this.addIndex = sim.s.next;
-      pts = [
-        from,
-        { yaw: b.yaw, r: BOWL_RING, y: 0.3, p: DOWN },
-        { yaw: b.yaw, r: BOWL_RING, y: 0.02 + 0.03 * b.size, p: DOWN + 0.2, grab: true },
-        { yaw: b.yaw, r: BOWL_RING - 0.03, y: 0.3, p: DOWN - 0.3 },
-        { yaw: 0, r: 0.47, y: 0.32, p: DOWN - 0.3 },
-        { yaw: 0, r: 0.5, y: 0.26, p: -0.45, pour: true },
-        { ...HOME },
-      ];
-    } else if (name === 'STIR') {
-      pts = [from];
-      for (let k = 0; k <= 6; k++) {
-        const s = k % 2 ? 1 : -1;
-        pts.push({ yaw: 0.12 * s, r: WOK.x + 0.07 * s, y: 0.125, p: DOWN + 0.3 * s });
-      }
-      pts.push({ ...HOME });
-    } else if (name === 'TOSS') {
-      const scoop = { yaw: 0, r: 0.46, y: 0.13, p: DOWN - 0.5 };
-      const flick = { yaw: 0, r: 0.62, y: 0.33, p: -0.6, flick: true };
-      pts = [from, scoop, flick, { ...scoop }, { ...flick }, { ...HOME }];
-    } else if (name === 'PLATE') {
-      pts = [from];
-      for (let k = 0; k < 2; k++) {
-        pts.push(
-          { yaw: 0, r: 0.48, y: 0.13, p: DOWN - 0.4 },
-          { yaw: 0, r: 0.47, y: 0.34, p: DOWN - 0.4 },
-          { yaw: PLATE_YAW, r: 0.5, y: 0.24, p: DOWN - 0.4 },
-          { yaw: PLATE_YAW, r: 0.55, y: 0.1, p: -0.5, serve: true },
-        );
-      }
-      pts.push({ yaw: PLATE_YAW / 2, r: 0.45, y: 0.34, p: DOWN });
+    if (name === 'TOSS') {
+      pts = tossWaypoints(from, this.holding);
+    } else if (heat) {
+      // Burner changes are electronic: the arm keeps its pose (and its grip).
+      pts = this.holding ? [from, { ...from }] : [from, { ...from, y: from.y + 0.015 }, { ...HOME }];
     } else {
-      // Burner changes are electronic: the arm only gives a small nod.
-      pts = [from, { ...from, y: from.y + 0.015 }, { ...HOME }];
+      // Any other move first lets go of the wok handle.
+      pts = this.holding ? releaseWaypoints(from) : [from];
+      if (name === 'ADD') {
+        const b = this.bowls[sim.s.next];
+        this.addIndex = sim.s.next;
+        pts.push(
+          { yaw: b.yaw, r: BOWL_RING, y: 0.3, p: DOWN },
+          { yaw: b.yaw, r: BOWL_RING, y: 0.02 + 0.03 * b.size, p: DOWN + 0.2, grab: true },
+          { yaw: b.yaw, r: BOWL_RING - 0.03, y: 0.3, p: DOWN - 0.3 },
+          { yaw: 0, r: 0.47, y: 0.32, p: DOWN - 0.3 },
+          { yaw: 0, r: 0.5, y: 0.26, p: -0.45, pour: true },
+          { ...HOME },
+        );
+      } else if (name === 'STIR') {
+        for (let k = 0; k <= 6; k++) {
+          const s = k % 2 ? 1 : -1;
+          pts.push({ yaw: 0.12 * s, r: WOK.x + 0.07 * s, y: 0.125, p: DOWN + 0.3 * s });
+        }
+        pts.push({ ...HOME });
+      } else if (name === 'PLATE') {
+        for (let k = 0; k < 2; k++) {
+          pts.push(
+            { yaw: 0, r: 0.48, y: 0.13, p: DOWN - 0.4 },
+            { yaw: 0, r: 0.47, y: 0.34, p: DOWN - 0.4 },
+            { yaw: PLATE_YAW, r: 0.5, y: 0.24, p: DOWN - 0.4 },
+            { yaw: PLATE_YAW, r: 0.55, y: 0.1, p: -0.5, serve: true },
+          );
+        }
+        pts.push({ yaw: PLATE_YAW / 2, r: 0.45, y: 0.34, p: DOWN });
+      } else {
+        pts.push({ ...HOME });
+      }
     }
     this.path = makePath(pts);
     this.lastDist = 0;
@@ -298,6 +315,16 @@ export class ArmView3D {
         this.bowls[this.addIndex].full = false;
       }
       if (p.pour) this.carry = null;
+      if (p.grasp) {
+        // Fix the wok to the gripper: wok = wrist · rel for as long as it is held.
+        const j = inverseKinematics(fromCyl(p), p.p, ARM, this.joints.yaw);
+        this.wokRel = mat4.multiply(mat4.invertRigid(armFrames(j).wrist), WOK_REST);
+        this.holding = true;
+      }
+      if (p.release) {
+        this.holding = false;
+        this.wokRel = null;
+      }
       if (p.flick) this.flick(sim);
       if (p.serve) this.plateFill = Math.min(1, this.plateFill + 0.5);
     }
@@ -306,14 +333,18 @@ export class ArmView3D {
     this.joints = inverseKinematics(fromCyl(this.c), this.c.p, ARM, this.joints.yaw);
   }
 
+  // The wok's world transform: on the burner, or carried by the gripper.
+  wokMatrix() {
+    return this.holding && this.wokRel ? mat4.multiply(armFrames(this.joints).wrist, this.wokRel) : WOK_REST;
+  }
+
   flick(sim) {
-    this.shake = 1;
     const toss = sim.cfg.tossIntensity;
     for (const p of this.particles) {
       if (Math.random() < 0.4 + 0.5 * toss) {
         p.air = true;
         p.vy = (0.7 + Math.random() * 0.8) * (0.5 + toss);
-        p.vx = (Math.random() - 0.5) * 0.3 - 0.15;
+        p.vx = (Math.random() - 0.5) * 0.3 - 0.1;
         p.vz = (Math.random() - 0.5) * 0.3;
       }
     }
@@ -361,9 +392,10 @@ export class ArmView3D {
     if (this.particles.length > target) this.particles.length = target;
   }
 
+  // Food positions are kept in the wok's own frame so they travel with it.
   restPos(p) {
     const d = p.rho * WOK.r;
-    return [WOK.x + Math.cos(p.ang) * d, wokSurface(d) + 0.006 + p.layer * 0.012, WOK.z + Math.sin(p.ang) * d];
+    return [Math.cos(p.ang) * d, wokSurface(d) + 0.006 + p.layer * 0.012, Math.sin(p.ang) * d];
   }
 
   stepParticles(sim, dt) {
@@ -390,8 +422,9 @@ export class ArmView3D {
     }
     const steam = s.mass > 0 && s.T > 105 ? (s.moisture * (s.T - 100)) / 100 : 0;
     const smoke = Math.min(1, s.burn * 3 + Math.max(0, s.T - 270) / 60);
+    const center = mat4.transformPoint(this.wokMatrix(), [0, WOK.bottom + WOK.depth * 0.6, 0]);
     const spawn = (isSmoke) => this.puffs.push({
-      x: WOK.x + (Math.random() - 0.5) * 0.25, y: WOK.bottom + WOK.depth * 0.6, z: WOK.z + (Math.random() - 0.5) * 0.25,
+      x: center[0] + (Math.random() - 0.5) * 0.25, y: center[1], z: center[2] + (Math.random() - 0.5) * 0.25,
       life: 1, smoke: isSmoke, seed: Math.random() * 10,
     });
     if (this.puffs.length < 80 && Math.random() < steam * dt * 20) spawn(false);
@@ -402,7 +435,6 @@ export class ArmView3D {
       f.life -= dt * 0.45;
     }
     this.puffs = this.puffs.filter((f) => f.life > 0);
-    this.shake = Math.max(0, this.shake - dt * 3);
   }
 
   // ------------------------------------------------------------- draw --
@@ -489,15 +521,17 @@ export class ArmView3D {
     g.draw(M.cyl, mul(T(...KNOB), mat4.rotX(Math.PI / 2), S(0.02, 0.02, 0.02)), steel);
     g.draw(M.box, mul(T(KNOB[0], KNOB[1], KNOB[2] + 0.012), mat4.rotZ(0.75 * Math.PI - burner * 1.5 * Math.PI), T(0, 0.009, 0), S(0.004, 0.018, 0.004)), accent);
 
-    // Wok (heat-tinted), shaken on tosses
-    const shake = T(Math.sin(this.time * 60) * this.shake * 0.006, this.shake * 0.01, 0);
+    // Wok (heat-tinted), on the burner or in the gripper
+    const wokM = this.wokMatrix();
     const heat = clamp01((s.T - 180) / 180);
-    g.draw(M.wok, mul(shake, T(WOK.x, 0, WOK.z)), {
+    g.draw(M.wok, wokM, {
       color: mixColor('#2e3136', '#4a2a1c', heat * 0.35), emissive: [0.22 * heat, 0.05 * heat, 0.01 * heat], shininess: 30,
     });
     const rimY = WOK.bottom + WOK.depth;
-    g.draw(M.cylLow, mul(shake, mat4.alignY([WOK.x + WOK.r, rimY, WOK.z], [WOK.x + WOK.r + 0.22, rimY + 0.05, WOK.z], 0.012)), steelDark);
-    g.draw(M.cylLow, mul(shake, mat4.alignY([WOK.x + WOK.r + 0.12, rimY + 0.027, WOK.z], [WOK.x + WOK.r + 0.24, rimY + 0.055, WOK.z], 0.016)), { color: [0.42, 0.27, 0.16] });
+    // Handle points back at the arm; the wooden sleeve is where the gripper holds it.
+    const handleAt = (t, extra = 0) => [-WOK.r - (HANDLE.length + extra) * t, rimY + (HANDLE.rise + extra * 0.18) * t, 0];
+    g.draw(M.cylLow, mul(wokM, mat4.alignY(handleAt(0), handleAt(1), 0.012)), steelDark);
+    g.draw(M.cylLow, mul(wokM, mat4.alignY(handleAt(0.45), handleAt(1, 0.02), 0.016)), { color: [0.42, 0.27, 0.16] });
 
     // Food in the wok
     const rice = riceColor(s);
@@ -506,10 +540,10 @@ export class ArmView3D {
       if (!p.visible) continue;
       visible++;
       const sc = p.rice ? S(0.009, 0.005, 0.005) : S(0.008);
-      g.draw(M.grain, mul(shake, T(p.x, p.y, p.z), mat4.rotY(p.spin), sc), { color: p.rice ? rice : p.color, shininess: p.rice ? 0 : 10 });
+      g.draw(M.grain, mul(wokM, T(p.x, p.y, p.z), mat4.rotY(p.spin), sc), { color: p.rice ? rice : p.color, shininess: p.rice ? 0 : 10 });
     }
     if (s.mass > 0 && visible === 0) {
-      g.draw(M.cylLow, mul(shake, T(WOK.x, wokSurface(0.05) + 0.002, WOK.z), S(0.1, 0.002, 0.1)), { color: [0.95, 0.79, 0.3], opacity: 0.6, shininess: 60 });
+      g.draw(M.cylLow, mul(wokM, T(0, wokSurface(0.05) + 0.002, 0), S(0.1, 0.002, 0.1)), { color: [0.95, 0.79, 0.3], opacity: 0.6, shininess: 60 });
     }
 
     // Plate
@@ -522,7 +556,7 @@ export class ArmView3D {
     g.draw(M.cylLow, mat4.alignY(MAST.base, MAST.top, 0.015), steelDark);
     g.draw(M.cylLow, mat4.alignY(MAST.top, [MAST.head[0], MAST.top[1], MAST.head[2]], 0.012), steelDark);
     g.draw(M.box, mul(T(...MAST.head), S(0.08, 0.05, 0.06)), steel);
-    const food = [WOK.x, WOK.bottom + 0.02, WOK.z];
+    const food = mat4.transformPoint(wokM, [0, WOK.bottom + 0.02, 0]).slice(0, 3);
     if (this.readings?.temp != null) g.draw(M.cylLow, mat4.alignY(MAST.head, food, 0.0025), { color: [1, 0.2, 0.2], unlit: true, opacity: 0.55 });
     if (this.readings?.browning != null) g.draw(M.cone, mat4.alignY(food, MAST.head, 0.24), { color: [0.5, 0.7, 1], unlit: true, opacity: 0.03 });
 
@@ -569,12 +603,11 @@ export class ArmView3D {
     const T = mat4.translation;
     const S = mat4.scaling;
     const mul = mat4.mul;
-    const { yaw, q1, q2, q3 } = this.joints;
     const { steel, steelDark, accent } = mats;
+    const { base, shoulder, elbow, wrist } = armFrames(this.joints);
 
     g.draw(M.cyl, mul(T(0, 0.15, 0), S(0.085, 0.3, 0.085)), steelDark);
     g.draw(M.cyl, mul(T(0, 0.012, 0), S(0.13, 0.024, 0.13)), steelDark);
-    const base = mul(T(0, 0, 0), mat4.rotY(yaw));
     g.draw(M.cyl, mul(base, T(0, 0.325, 0), S(0.1, 0.05, 0.1)), steel);
     g.draw(M.box, mul(base, T(0.095, 0.325, 0), S(0.02, 0.03, 0.03)), accent);
 
@@ -582,14 +615,15 @@ export class ArmView3D {
       g.draw(M.cyl, mul(frame, mat4.rotX(Math.PI / 2), S(r, w, r)), steelDark);
       g.draw(M.cyl, mul(frame, mat4.rotX(Math.PI / 2), S(r * 0.45, w + 0.01, r * 0.45)), accent);
     };
-    const shoulder = mul(base, T(0, ARM.shoulderH, 0), mat4.rotZ(q1));
     g.draw(M.box, mul(shoulder, T(ARM.l1 / 2, 0, 0), S(ARM.l1, 0.07, 0.06)), steel);
     joint(shoulder, 0.065, 0.11);
-    const elbow = mul(shoulder, T(ARM.l1, 0, 0), mat4.rotZ(q2));
     g.draw(M.box, mul(elbow, T(ARM.l2 / 2, 0, 0), S(ARM.l2, 0.055, 0.05)), steel);
     joint(elbow, 0.05, 0.09);
-    const wrist = mul(elbow, T(ARM.l2, 0, 0), mat4.rotZ(q3));
     joint(wrist, 0.038, 0.075);
+    // Gripper: palm plus two fingers that close on the wok handle.
+    const finger = this.holding ? 0.02 : 0.035;
+    g.draw(M.box, mul(wrist, T(0.03, 0, 0), S(0.014, 0.026, 0.09)), steelDark);
+    for (const side of [-1, 1]) g.draw(M.box, mul(wrist, T(GRIP + 0.005, 0, side * finger), S(0.05, 0.022, 0.008)), accent);
     // Tool: shaft along the wrist's x axis, spatula blade at the end.
     g.draw(M.cylLow, mul(wrist, T(ARM.tool / 2, 0, 0), mat4.rotZ(-Math.PI / 2), S(0.008, ARM.tool, 0.008)), { color: [0.85, 0.85, 0.82], shininess: 60 });
     g.draw(M.box, mul(wrist, T(ARM.tool - 0.02, 0, 0), S(0.06, 0.004, 0.07)), { color: [0.85, 0.85, 0.82], shininess: 60 });

@@ -120,3 +120,39 @@ test('3D arm: forward kinematics reproduces the inverse-kinematics target', asyn
   }
   assert.ok(Math.abs(path.pts[1].yaw - path.pts[0].yaw) < Math.PI);
 });
+
+test('wok toss: every waypoint is reachable and the grasp lands on the handle', async () => {
+  const k = await import('../ui/js/kinematics.js');
+  const home = { yaw: 0, r: 0.5, y: 0.36, p: -Math.PI / 2 };
+  const fresh = k.tossWaypoints(home, false);
+  const again = k.tossWaypoints(fresh[fresh.length - 1], true);
+  const release = k.releaseWaypoints(again[again.length - 1]);
+  for (const pt of [...fresh, ...again, ...release]) {
+    const j = k.inverseKinematics(k.fromCyl(pt), pt.p);
+    assert.ok(j.reachable, `unreachable ${JSON.stringify(pt)}`);
+  }
+  const grasp = fresh.find((p) => p.grasp);
+  const fk = k.forwardKinematics(k.inverseKinematics(k.fromCyl(grasp), grasp.p));
+  // Fingers sit GRIP metres from the wrist along the tool.
+  const fingers = {
+    x: fk.wrist.x + k.GRIP * Math.cos(fk.pitch),
+    y: fk.wrist.y + k.GRIP * Math.sin(fk.pitch),
+  };
+  const g = k.handleGrip();
+  assert.ok(Math.hypot(fingers.x - g.r, fingers.y - g.y) < 1e-9);
+  assert.equal(fresh.filter((p) => p.flick).length, 1);
+  assert.equal(again.filter((p) => p.flick).length, 2);
+  assert.ok(!again.some((p) => p.grasp), 'no second grasp while holding');
+  assert.ok(release.some((p) => p.release));
+  // The wok returns exactly to the grasp pose so it lands back on the burner.
+  const last = again[again.length - 1];
+  assert.deepEqual([last.r, last.y, last.p], [grasp.r, grasp.y, grasp.p]);
+});
+
+test('rigid inverse undoes a rotation + translation', async () => {
+  const { mat4 } = await import('../ui/js/gl3d.js');
+  const m = mat4.mul(mat4.translation(0.3, -0.2, 0.5), mat4.rotY(0.7), mat4.rotZ(-1.1), mat4.rotX(0.4));
+  const id = mat4.multiply(mat4.invertRigid(m), m);
+  const ident = mat4.identity();
+  for (let i = 0; i < 16; i++) assert.ok(Math.abs(id[i] - ident[i]) < 1e-6);
+});
